@@ -49,12 +49,15 @@ constant uint8_t blake2b_sigma[12][16] =
 
 
 // Finalizes the hash and output it to the output buffer on big endian
-void blake2b_finalize_hash(private blake2b_state * state, global uint64_t * out_hash)
+void blake2b_finalize_hash(private blake2b_state * state, global uint64_t * out_hash, uint8_t out_hash_size)
 {
   private int i;
 
+  // Max is 64, do not allow past it (Might change to stop right at the start)
+  out_hash_size = (out_hash_size > OUT_HASH_LENGTH ? OUT_HASH_LENGTH : out_hash_size) / 8;
+
   // Output to result [TODO - Might need to add little to big endian for some gpus]
-  for(i=0;i<8;i++) 
+  for(i=0;i<out_hash_size;i++) 
   {
     out_hash[i] = state->hash_state[i];
   }
@@ -164,6 +167,33 @@ void blake2b_compress_chunk(private blake2b_state * state,
   blake2b_perform_compression(state, work_vector, chunk);
 }
 
+void blake2b_update(private blake2b_state * state,
+                    global const uint8_t * in_message, 
+                    const uint64_t message_size)
+{
+  // Store bytes remaining to be more efficient instead of calculating each time
+  private uint64_t bytes_remaining = message_size;
+  global uint8_t * chunk;
+
+  // Run in 128 bytes chunk and compress each chunk
+  while(bytes_remaining > HASH_BLOCK_SIZE)
+  {
+    // Get reference to the chunk and treat it as 64bit words
+    chunk = &(in_message[state.bytes_compressed]);
+
+    // Update the bytes compressed / remaining
+    state.bytes_compressed += HASH_BLOCK_SIZE;
+    bytes_remaining -= HASH_BLOCK_SIZE;
+
+    // Compress the chunk
+    blake2b_compress_chunk(&state, chunk, HASH_BLOCK_SIZE, false);
+  }
+
+  // Compress the last chunk
+  chunk = &(in_message[state.bytes_compressed]);
+  state.bytes_compressed += bytes_remaining;
+  blake2b_compress_chunk(&state, chunk, bytes_remaining, true);
+}
 
 // Initialization vector for blake2b hash state
 void blake2b_init(private blake2b_state * state)
@@ -184,42 +214,23 @@ void blake2b_init(private blake2b_state * state)
 // in_message - The message to hash
 // out_hash - The buffer to store the resulting hash
 // message_size - The size of the given message to hash
+// out_hash_size - The size of the output hash, should not exceed OUT_HASH_SIZE(64)
 // Notes:
-// Extra hash key is not supported yet (and also output hash size)
+// Extra hash key is not supported yet
 kernel void blake2b_gpu_hash(global const uint8_t * in_message, 
                              global uint64_t * out_hash, 
-                             const uint64_t message_size)
+                             const uint64_t message_size,
+                             const uint8_t out_hash_size)
 {
   // Create the state to be used as local memory
   private blake2b_state state;
 
-  // Store bytes remaining to be more efficient instead of calculating each time
-  private uint64_t bytes_remaining = message_size;
-  global uint8_t * chunk;
-  private uint8_t i;
-
   // Initialize the state
   blake2b_init(&state);
 
-  // Run in 128 bytes chunk and compress each chunk
-  while(bytes_remaining > HASH_BLOCK_SIZE)
-  {
-    // Get reference to the chunk and treat it as 64bit words
-    chunk = &(in_message[state.bytes_compressed]);
-
-    // Update the bytes compressed / remaining
-    state.bytes_compressed += HASH_BLOCK_SIZE;
-    bytes_remaining -= HASH_BLOCK_SIZE;
-
-    // Compress the chunk
-    blake2b_compress_chunk(&state, chunk, HASH_BLOCK_SIZE, false);
-  }
-
-  // Compress the last chunk
-  chunk = &(in_message[state.bytes_compressed]);
-  state.bytes_compressed += bytes_remaining;
-  blake2b_compress_chunk(&state, chunk, bytes_remaining, true);
+  // Perform the update on the given message
+  blake2b_update(&state, in_message, message_size);
 
   // Finalize the hash and write it out
-  blake2b_finalize_hash(&state, out_hash);
+  blake2b_finalize_hash(&state, out_hash, out_hash_size);
 }

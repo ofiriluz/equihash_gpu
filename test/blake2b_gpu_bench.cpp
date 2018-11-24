@@ -187,10 +187,10 @@ int main(int argc, char ** argv)
             cl::CommandQueue queue(context, 0, &err);
 
             // Create the gpu function 
-            auto blake2b_kernel = cl::make_kernel<cl::Buffer, cl::Buffer, unsigned long>(testProgram, "blake2b_gpu_hash", &err);
+            auto blake2b_kernel = cl::make_kernel<cl::Buffer, cl::Buffer, uint64_t, uint8_t>(testProgram, "blake2b_gpu_hash", &err);
             // Run the kernel K times just to simulate K hashes
             Timer kernel;
-            blake2b_kernel(cl::EnqueueArgs(queue, 100000), inMessage, outHash, message.size());
+            blake2b_kernel(cl::EnqueueArgs(queue, 100000), inMessage, outHash, message.size(), 64);
 
             queue.finish();
             int64_t t1 = kernel.elapsed();
