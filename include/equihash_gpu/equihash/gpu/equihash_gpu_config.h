@@ -16,6 +16,7 @@
 #include <fstream>
 #include <vector>
 #include <iostream>
+#include "equihash_gpu/equihash/gpu/equihash_gpu_util.h"
 
 namespace Equihash
 {

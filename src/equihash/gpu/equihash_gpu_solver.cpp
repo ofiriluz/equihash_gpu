@@ -38,14 +38,22 @@ namespace Equihash
         // P is defined by default to be 5
         // Index of the iteration is stored at the start of each item at the bucket
         // Bucket structure : |COUNT|B1INDEX|B1BITS|B2INDEX|B2BITS|...|
-        // Which means one bucket size = (sizeof(uint32_t) * (K+1))*P + sizeof(uint16_t)
+        // Which means one bucket size = (sizeof(uint32_t) * (K+1))*P + sizeof(uint32_t)
         // Buffer will allocate bucket_size*2^S buckets
         equihash_context_.bucket_size = 
-            (sizeof(uint32_t) * (equihash_context_.K + 1))*MAX_BUCKET_AMOUNT + sizeof(uint16_t);
+            (sizeof(uint32_t) * (equihash_context_.K + 1))*MAX_BUCKET_AMOUNT + sizeof(uint32_t);
         buckets_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             equihash_context_.bucket_size*(((uint32_t)1) << equihash_context_.S)
+        );
+
+        // Construct the digests buffer for the hashes (256 bits)
+        // Assume that 32 bytes are enough (K shouldnt get to ~31)
+        digest_buffer_ = cl::Buffer(
+            gpu_config_.get_context(),
+            CL_MEM_READ_ONLY,
+            sizeof(uint32_t)*8
         );
 
         // Construct the context buffer to be used, will be the same as the gpu structure
@@ -79,7 +87,9 @@ namespace Equihash
 
         hash_kernel.setArg(0, context_buffer_);
         hash_kernel.setArg(1, buckets_buffer_);
-        hash_kernel.setArg(2, nonce);
+        hash_kernel.setArg(2, digest_buffer_);
+        hash_kernel.setArg(3, 32);
+        hash_kernel.setArg(4, nonce);
 
         // Run the kernel 
         queue.enqueueNDRangeKernel(hash_kernel, global_work_offset, 
@@ -115,6 +125,9 @@ namespace Equihash
 
             // Fill the buffer hashes, note that this will block and run in batches on the GPU
             enqueue_and_run_hash_kernel(nonce);
+
+            // Perform the coliision detection
+            enqueue_and_run_coliision_kernel();
         }
 
         return Proof();

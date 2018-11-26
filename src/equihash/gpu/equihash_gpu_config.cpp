@@ -77,12 +77,11 @@ namespace Equihash
                                         (std::istreambuf_iterator<char>()));
         std::cout << source << std::endl;
         return std::pair<const char *, size_t>(source.c_str(), source.size());
-        // return std::make_pair<const char *, ::size_t>(source.c_str(), source.size());    
     }
 
     bool EquihashGPUConfig::prepare_program()
     {
-        cl_int err;
+        cl_int err = CL_SUCCESS;
         std::vector<std::pair<const char *, size_t>> sources;
         // sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl"));
         // sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"));
@@ -102,6 +101,7 @@ namespace Equihash
 
         // // Build the program
         // err = compiled_gpu_program_.build();
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
             for (cl::Device dev : gpu_used_devices_)
