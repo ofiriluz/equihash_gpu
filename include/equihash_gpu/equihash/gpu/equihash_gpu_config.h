@@ -13,6 +13,9 @@
 #define EQUIHASHGPU_EQUIHASH_GPU_CONFIG_H_
 
 #include <CL/cl.hpp>
+#include <fstream>
+#include <vector>
+#include <iostream>
 
 namespace Equihash
 {
@@ -29,6 +32,9 @@ namespace Equihash
         cl::Kernel equihash_solutions_kernel_;
         cl::CommandQueue equihash_kernel_command_queue_;
 
+    private:
+        std::pair<const char *, ::size_t> read_source(const std::string & path);
+
     public:
         EquihashGPUConfig();
         virtual ~EquihashGPUConfig();
@@ -36,6 +42,7 @@ namespace Equihash
         void initialize_configuration();
         void clear_configuration();
         bool prepare_program();
+        cl::Context & get_context();
         cl::Program & get_program();
         cl::Kernel & get_equihash_hash_kernel();
         cl::Kernel & get_equihash_collision_kernel();

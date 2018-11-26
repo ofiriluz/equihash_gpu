@@ -19,8 +19,8 @@ namespace Equihash
     class IEquihashSolver
     {
     public:
-        IEquihashSolver();
-        virtual ~IEquihashSolver();
+        IEquihashSolver(){}
+        virtual ~IEquihashSolver(){}
 
         virtual Proof find_proof() = 0;
         virtual bool verify_proof(const Proof & proof) = 0;

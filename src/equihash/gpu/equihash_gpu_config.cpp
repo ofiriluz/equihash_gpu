@@ -10,11 +10,10 @@
  */
 
 #include "equihash_gpu/equihash/gpu/equihash_gpu_config.h"
-#include "equihash_gpu/config.h"
 
 namespace Equihash
 {
-    EquihashGPUConfig::EquihashGPUConfig(): is_configured_(false);
+    EquihashGPUConfig::EquihashGPUConfig(): is_configured_(false)
     {
 
     }
@@ -71,32 +70,48 @@ namespace Equihash
         is_configured_ = false;
     }
 
+    std::pair<const char *, ::size_t> EquihashGPUConfig::read_source(const std::string & path)
+    {
+        std::ifstream stream(path);
+        std::string source = std::string(std::istreambuf_iterator<char>(stream),
+                                        (std::istreambuf_iterator<char>()));
+        return std::make_pair<const char *, ::size_t>(source.c_str(), source.size());    
+    }
+
     bool EquihashGPUConfig::prepare_program()
     {
         cl_int err;
+        std::vector<std::pair<const char *, ::size_t>> sources;
+        sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl"));
+        sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"));
 
         // Create the program and load the .cl files
-        compiled_gpu_program_ = cl::Program(gpu_context_, {
-            BLAKE2B_GPU_PROGRAM_PATH,
-            EQUIHASH_GPU_PROGRAM_PATH
-        }, true, &err);
+        compiled_gpu_program_ = cl::Program(gpu_context_, sources, &err);
 
         if (err != CL_SUCCESS)
         {
             for (cl::Device dev : gpu_used_devices_)
             {
                 // Check the build status
-                cl_build_status status = testProgram.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev);
+                cl_build_status status = compiled_gpu_program_.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev);
                 if (status != CL_BUILD_ERROR)
                     continue;
 
                 // Get the build log
                 std::string name     = dev.getInfo<CL_DEVICE_NAME>();
-                std::string buildlog = testProgram.getBuildInfo<CL_PROGRAM_BUILD_LOG>(dev);
+                std::string buildlog = compiled_gpu_program_.getBuildInfo<CL_PROGRAM_BUILD_LOG>(dev);
                 std::cerr << "Build log for " << name << ":" << std::endl
                             << buildlog << std::endl;
             }
 
+            return false;
+        }
+
+        // Build the program
+        err = compiled_gpu_program_.build();
+        if (err != CL_SUCCESS)
+        {
+            std:: cout << "Could not build sources" << std::endl;
             return false;
         }
 
@@ -109,27 +124,31 @@ namespace Equihash
         }
 
         // Get the kernel for equihash hashing, collision and solutions
-        equihash_hash_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_HASH_NAME , &err);
+        equihash_hash_kernel_ = cl::Kernel(compiled_gpu_program_,"equihash_initialize_hash" , &err);
         if (err != CL_SUCCESS)
         {
             std::cout << "Could not retrieve hash kernel" << std::endl;
             return false;
         }
-        equihash_collision_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_COLLISION_NAME , &err);
-        if (err != CL_SUCCESS)
-        {
-            std::cout << "Could not retrieve collision kernel" << std::endl;
-            return false;
-        }
-        equihash_collision_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_SOLUTIONS_NAME , &err);
-        if (err != CL_SUCCESS)
-        {
-            std::cout << "Could not retrieve solutions kernel" << std::endl;
-            return false;
-        }
-
+        // equihash_collision_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_COLLISION_NAME , &err);
+        // if (err != CL_SUCCESS)
+        // {
+        //     std::cout << "Could not retrieve collision kernel" << std::endl;
+        //     return false;
+        // }
+        // equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_SOLUTIONS_NAME , &err);
+        // if (err != CL_SUCCESS)
+        // {
+        //     std::cout << "Could not retrieve solutions kernel" << std::endl;
+        //     return false;
+        // }
 
         return true;
+    }
+
+    cl::Context & EquihashGPUConfig::get_context()
+    {
+        return gpu_context_;
     }
 
     cl::Program & EquihashGPUConfig::get_program()
