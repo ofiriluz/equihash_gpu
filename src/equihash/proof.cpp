@@ -13,7 +13,12 @@
 
 namespace Equihash
 {
-    Proof::Proof(std::vector<uint32_t> solution_inputs, uint32_t solution_nonce)
+    Proof::Proof():solution_nonce_(0)
+    {
+
+    }
+
+    Proof::Proof(const std::vector<uint32_t> & solution_inputs, uint32_t solution_nonce)
     {
 
     }
@@ -23,7 +28,7 @@ namespace Equihash
 
     }
 
-    std::vector<uint32_t> Proof::get_solution_inputs()const
+    std::vector<uint32_t> & Proof::get_solution_inputs()
     {
         return solution_inputs_;
     }

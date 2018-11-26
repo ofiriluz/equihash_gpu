@@ -152,7 +152,7 @@ int main(int argc, char ** argv)
             cl::Context context(devices);
 
             // Create a dummy message to hash
-            std::string message = "The quick brown fox jumps over the lazy dog The quick brown fox jumps over the lazy dog fox jumps over the lazy dog the lazy do";
+            std::string message = "The quick brown fox jumps over the lazy dog The quick brown fox jumps over the lazy dog fox jumps over the lazy dog the lazy dog";
             std::vector<uint8_t> outputHashResult(512);
 
             // Create a cl buffers that we will enqueue 
@@ -160,7 +160,7 @@ int main(int argc, char ** argv)
             cl::Buffer outHash(context, CL_MEM_WRITE_ONLY, 512, nullptr, &err);
 
             // Read the .cl file
-            std::ifstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/gpu/blake2b.cl");
+            std::ifstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl");
             std::string program = std::string(std::istreambuf_iterator<char>(stream),
                 (std::istreambuf_iterator<char>()));            
 

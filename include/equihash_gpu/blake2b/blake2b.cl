@@ -1,5 +1,5 @@
-#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable;
-#pragma OPENCL EXTENSION cl_nv_pragma_unroll;
+#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable
+#pragma OPENCL EXTENSION cl_nv_pragma_unroll
 
 #define OUT_HASH_LENGTH 64 // Only 64 is supported for now
 #define HASH_BLOCK_SIZE 128
@@ -164,7 +164,7 @@ void blake2b_compress_chunk(private blake2b_state * state,
   } 
 
   // Perform the mix compression
-  blake2b_perform_compression(state, work_vector, chunk);
+  blake2b_perform_compression(state, work_vector, words);
 }
 
 void blake2b_update(private blake2b_state * state,
@@ -173,26 +173,26 @@ void blake2b_update(private blake2b_state * state,
 {
   // Store bytes remaining to be more efficient instead of calculating each time
   private uint64_t bytes_remaining = message_size;
-  global uint8_t * chunk;
+  global const uint8_t * chunk;
 
   // Run in 128 bytes chunk and compress each chunk
   while(bytes_remaining > HASH_BLOCK_SIZE)
   {
     // Get reference to the chunk and treat it as 64bit words
-    chunk = &(in_message[state.bytes_compressed]);
+    chunk = &(in_message[state->bytes_compressed]);
 
     // Update the bytes compressed / remaining
-    state.bytes_compressed += HASH_BLOCK_SIZE;
+    state->bytes_compressed += HASH_BLOCK_SIZE;
     bytes_remaining -= HASH_BLOCK_SIZE;
 
     // Compress the chunk
-    blake2b_compress_chunk(&state, chunk, HASH_BLOCK_SIZE, false);
+    blake2b_compress_chunk(state, chunk, HASH_BLOCK_SIZE, false);
   }
 
   // Compress the last chunk
-  chunk = &(in_message[state.bytes_compressed]);
-  state.bytes_compressed += bytes_remaining;
-  blake2b_compress_chunk(&state, chunk, bytes_remaining, true);
+  chunk = &(in_message[state->bytes_compressed]);
+  state->bytes_compressed += bytes_remaining;
+  blake2b_compress_chunk(state, chunk, bytes_remaining, true);
 }
 
 // Initialization vector for blake2b hash state

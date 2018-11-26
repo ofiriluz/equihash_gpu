@@ -102,17 +102,22 @@ namespace Equihash
 
     Proof EquihashGPUSolver::find_proof()
     {
+        // Initialize the GPU config
+        gpu_config_.initialize_configuration();
+        gpu_config_.prepare_program();
+
         uint32_t nonce = 1;
         while(nonce < MAX_NONCE)
         {
             nonce++;
-
             // Prepare the GPU buffers
             prepare_buffers();
 
             // Fill the buffer hashes, note that this will block and run in batches on the GPU
             enqueue_and_run_hash_kernel(nonce);
         }
+
+        return Proof();
     }
 
     bool EquihashGPUSolver::verify_proof(const Proof & proof)

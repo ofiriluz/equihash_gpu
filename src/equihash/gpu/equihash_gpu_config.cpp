@@ -70,24 +70,38 @@ namespace Equihash
         is_configured_ = false;
     }
 
-    std::pair<const char *, ::size_t> EquihashGPUConfig::read_source(const std::string & path)
+    std::pair<const char *, size_t> EquihashGPUConfig::read_source(const std::string & path)
     {
-        std::ifstream stream(path);
+        std::fstream stream(path);
         std::string source = std::string(std::istreambuf_iterator<char>(stream),
                                         (std::istreambuf_iterator<char>()));
-        return std::make_pair<const char *, ::size_t>(source.c_str(), source.size());    
+        std::cout << source << std::endl;
+        return std::pair<const char *, size_t>(source.c_str(), source.size());
+        // return std::make_pair<const char *, ::size_t>(source.c_str(), source.size());    
     }
 
     bool EquihashGPUConfig::prepare_program()
     {
         cl_int err;
-        std::vector<std::pair<const char *, ::size_t>> sources;
-        sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl"));
-        sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"));
+        std::vector<std::pair<const char *, size_t>> sources;
+        // sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl"));
+        // sources.push_back(read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"));
+
+        std::fstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl");
+        std::string source = std::string(std::istreambuf_iterator<char>(stream),
+                                        (std::istreambuf_iterator<char>()));
 
         // Create the program and load the .cl files
-        compiled_gpu_program_ = cl::Program(gpu_context_, sources, &err);
+        // compiled_gpu_program_ = cl::Program(gpu_context_, sources, &err);
+        compiled_gpu_program_ = cl::Program(gpu_context_, source, true, &err);
+        // if (err != CL_SUCCESS)
+        // {
+        //     std:: cout << "Could not create GPU program" << std::endl;
+        //     return false;
+        // }
 
+        // // Build the program
+        // err = compiled_gpu_program_.build();
         if (err != CL_SUCCESS)
         {
             for (cl::Device dev : gpu_used_devices_)
@@ -104,14 +118,6 @@ namespace Equihash
                             << buildlog << std::endl;
             }
 
-            return false;
-        }
-
-        // Build the program
-        err = compiled_gpu_program_.build();
-        if (err != CL_SUCCESS)
-        {
-            std:: cout << "Could not build sources" << std::endl;
             return false;
         }
 

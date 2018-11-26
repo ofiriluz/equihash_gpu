@@ -24,10 +24,11 @@ namespace Equihash
         uint32_t solution_nonce_;
 
     public:
-        Proof(std::vector<uint32_t> solution_inputs, uint32_t solution_nonce);
+        Proof();
+        Proof(const std::vector<uint32_t> & solution_inputs, uint32_t solution_nonce);
         virtual ~Proof();
 
-        std::vector<uint32_t> get_solution_inputs()const;
+        std::vector<uint32_t> & get_solution_inputs();
         uint32_t get_solution_nonce()const;
     };
 }
