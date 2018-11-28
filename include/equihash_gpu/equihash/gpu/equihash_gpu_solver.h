@@ -28,9 +28,17 @@ namespace Equihash
     // Structure to be used on the GPU aswell
     struct EquihashGPUContext
     {
-        uint16_t N, K, S; // S = N/(K+1), calculated once instead of each thread
+        uint32_t N, K;
+        uint32_t collision_bits_length;
+        uint32_t collision_bytes_length;
+        uint32_t hash_length;
+        uint32_t indices_per_hash_output;
+        uint32_t hash_output;
+        uint32_t full_width;
+        uint32_t init_size;
+        uint32_t solution_size;
+
         uint8_t seed[SEED_SIZE+2]; // Later for nonce and index
-        uint32_t bucket_size;
     };
 
     class EquihashGPUSolver : public IEquihashSolver
@@ -40,15 +48,18 @@ namespace Equihash
         EquihashGPUContext equihash_context_;
 
         // OpenCL buffers to be used
-        cl::Buffer buckets_buffer_;
+        cl::Buffer table_buffer_;
+        cl::Buffer combined_table_buffer_;
+        cl::Buffer combined_table_size_buffer_;
         cl::Buffer digest_buffer_;
         cl::Buffer context_buffer_;
         cl::Buffer solutions_buffer_;
 
     private:
+        void initialize_context();
         void prepare_buffers();
         void enqueue_and_run_hash_kernel(uint32_t nonce);
-        void enqueue_and_run_coliision_kernel();
+        void enqueue_and_run_coliision_detection_rounds_kernel();
         void enqueue_and_run_solutions_kernel();
 
     public:
