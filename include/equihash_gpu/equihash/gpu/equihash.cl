@@ -76,18 +76,40 @@ void expand_array(global uint8_t * in,
     }
 }
 
-bool has_collision(global uint8_t * a, global uint8_t * b, const uint32_t size)
+bool has_collision(global uint8_t * a, global uint8_t * b, uint32_t bits)
 {
-    private uint32_t i;
-    for(i=0;i<size;i++)
-    {
-        if(a[i] != b[i])
-        {
-            return false;
-        }
-    }
+    uint8_t u1, u2;
 
-    return true;
+    for ( ; bits-- ; a++, b++) {
+	u1 = * (global uint8_t *) a;
+	u2 = * (global uint8_t *) b;
+	if ( u1 != u2) {
+	    return (u1-u2);
+	}
+    }
+    return 0;
+
+
+
+    // Check size amount of bits
+    // // return false;
+    // private uint32_t a_bits = ((global uint32_t * )(a))[0];
+    // private uint32_t b_bits = ((global uint32_t * )(b))[0];
+    // return (a_bits << size) == (b_bits << size) ;
+    
+    // if((global uint32_t*)(a)))
+
+
+    // private uint32_t i;
+    // for(i=0;i<size;i++)
+    // {
+    //     if(a[i] != b[i])
+    //     {
+    //         return false;
+    //     }
+    // }
+
+    // return true;
 }
 
 bool distinct_indices(global uint8_t * a, global uint8_t * b, const uint32_t len, const uint32_t len_indices)
@@ -179,7 +201,7 @@ kernel void equihash_initialize_hash(global equihash_context * context,
                                      const uint32_t digest_size,
                                      const uint32_t nonce)
 {   
-    // // The index to be used is the global work index
+    // The index to be used is the global work index
     private uint32_t index = get_global_id(0);
     private uint8_t i, j, k;
     private uint8_t amount_to_add;
@@ -244,11 +266,14 @@ kernel void equihash_collision_detection_round(global equihash_context * context
     // We go over the working row up until the end and find collision
     // This is a naive solution but paralled
     printf("WORK SIZE = %d\n", working_table_size);
+    printf("%d\n", row_index);
+    printf("HASH LEN = %d\n", hash_len);
     for(i=row_index+1;i<working_table_size;i++)
     {
         printf("NO\n");
         selected_row = working_table + (context->full_width*i);
-        if(has_collision(row, selected_row, context->collision_bits_length)
+        printf("%p\n", selected_row);
+        if(has_collision(row, selected_row, context->collision_bytes_length)
             &&
            distinct_indices(row, selected_row, hash_len, indices_len))
         {
@@ -261,4 +286,5 @@ kernel void equihash_collision_detection_round(global equihash_context * context
             combine_rows(target_row, row, selected_row, hash_len, indices_len, context->collision_bytes_length);
         }
     }    
-}
+    printf("%d\n", collision_table_size[0]);
+}   

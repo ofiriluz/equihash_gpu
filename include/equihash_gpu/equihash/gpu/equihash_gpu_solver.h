@@ -49,8 +49,8 @@ namespace Equihash
 
         // OpenCL buffers to be used
         cl::Buffer table_buffer_;
-        cl::Buffer combined_table_buffer_;
-        cl::Buffer combined_table_size_buffer_;
+        cl::Buffer collision_table_buffer_;
+        cl::Buffer collision_table_size_buffer_;
         cl::Buffer digest_buffer_;
         cl::Buffer context_buffer_;
         cl::Buffer solutions_buffer_;

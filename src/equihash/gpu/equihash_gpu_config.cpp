@@ -48,8 +48,9 @@ namespace Equihash
         }
 
         // Create the context
-        gpu_context_ = cl::Context(gpu_used_devices_);
-
+        cl_int err;
+        gpu_context_ = cl::Context(gpu_used_devices_, NULL, NULL, NULL, &err);
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         is_configured_ = true;
     }
 
@@ -59,7 +60,7 @@ namespace Equihash
         {
             return;
         }
-
+        printf("QWEQW\n");
         gpu_used_devices_.clear();
         compiled_gpu_program_ = cl::Program();
         gpu_context_ = cl::Context();
@@ -80,18 +81,22 @@ namespace Equihash
     bool EquihashGPUConfig::prepare_program()
     {
         cl_int err = CL_SUCCESS;
-        std::string source = read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"); 
+        // std::string source = read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"); 
+        std::fstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl");
+        std::string source = std::string(std::istreambuf_iterator<char>(stream),
+                                        (std::istreambuf_iterator<char>()));
 
         // Create the program and load the .cl files
         compiled_gpu_program_ = cl::Program(gpu_context_, source, true, &err);
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
             for (cl::Device dev : gpu_used_devices_)
             {
                 // Check the build status
                 cl_build_status status = compiled_gpu_program_.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev);
-                if (status != CL_BUILD_ERROR)
-                    continue;
+                // if (status != CL_BUILD_ERROR)
+                //     continue;
 
                 // Get the build log
                 std::string name     = dev.getInfo<CL_DEVICE_NAME>();
@@ -104,7 +109,8 @@ namespace Equihash
         }
 
         // Create the command queue for equihash
-        equihash_kernel_command_queue_ = cl::CommandQueue(gpu_context_, 0, &err);
+        equihash_kernel_command_queue_ = cl::CommandQueue(gpu_context_, CL_QUEUE_PROFILING_ENABLE, &err);
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
             std::cout << "Could not create command queue" << std::endl;
@@ -113,12 +119,14 @@ namespace Equihash
 
         // Get the kernel for equihash hashing, collision and solutions
         equihash_hash_kernel_ = cl::Kernel(compiled_gpu_program_,"equihash_initialize_hash" , &err);
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
             std::cout << "Could not retrieve hash kernel" << std::endl;
             return false;
         }
         equihash_collision_detection_round_kernel_ = cl::Kernel(compiled_gpu_program_,"equihash_collision_detection_round" , &err);
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
             std::cout << "Could not retrieve collision kernel" << std::endl;

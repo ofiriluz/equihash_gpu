@@ -10,7 +10,8 @@
  */
 
 #include "equihash_gpu/equihash/gpu/equihash_gpu_solver.h"
-
+#include <unistd.h>
+#include <stdlib.h>
 namespace Equihash
 {
     EquihashGPUSolver::EquihashGPUSolver(uint16_t N, uint16_t K, uint32_t seed[SEED_SIZE])
@@ -20,6 +21,7 @@ namespace Equihash
 
         // For now copy all the seed, can be changed later
         memcpy(equihash_context_.seed, seed, SEED_SIZE);
+        // memset(equihash_context_.seed, 0, SEED_SIZE+2);
         equihash_context_.seed[SEED_SIZE] = 0;
         equihash_context_.seed[SEED_SIZE+1] = 0;
     }
@@ -59,13 +61,13 @@ namespace Equihash
         );
 
         // TODO - Change this
-        combined_table_buffer_ = cl::Buffer(
+        collision_table_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             (equihash_context_.init_size/2)*equihash_context_.full_width
         );
 
-        combined_table_size_buffer_ = cl::Buffer(
+        collision_table_size_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             sizeof(uint32_t)
@@ -102,8 +104,9 @@ namespace Equihash
         cl::NDRange global_work_offset = 0;
         // Go over table size / indices out per hash, since each hash will give us S indices
         // Rounded up 
+        // printf("%d\n", (equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1);
         cl::NDRange global_work_size((equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1);
-        cl::NDRange local_work_size(LOCAL_WORK_GROUP_SIZE);
+        cl::NDRange local_work_size(1);
         // cl::NDRange global_work_size(1);
         // cl::NDRange local_work_size(1);
         // Enqueue the buckets and the context to the kernel
@@ -117,60 +120,79 @@ namespace Equihash
         hash_kernel.setArg(4, nonce);
 
         // Run the kernel 
-        queue.enqueueNDRangeKernel(hash_kernel, global_work_offset, 
+        cl_int err = queue.enqueueNDRangeKernel(hash_kernel, global_work_offset, 
                                    global_work_size, local_work_size, 
                                    nullptr, &hash_event[0]);
 
+        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+        queue.finish();
         // Wait for the kernel to end
         cl::WaitForEvents(hash_event);
+
+        std::cout << "Finished creating hashes" << std::endl;
+        getchar();
     }
 
     void EquihashGPUSolver::enqueue_and_run_coliision_detection_rounds_kernel()
     {
-        std::vector<cl::Event> hash_event(1);
+        std::vector<cl::Event> hash_event(equihash_context_.K);
         cl::NDRange global_work_offset = 0;
-        // cl::NDRange global_work_size(equihash_context_.init_size);
+        cl::NDRange global_work_size(equihash_context_.init_size);
         // cl::NDRange local_work_size(LOCAL_WORK_GROUP_SIZE);
-        cl::NDRange global_work_size(1);
-        cl::NDRange local_work_size(1);
+        // cl::NDRange global_work_size(1);
+        cl::NDRange local_work_size(32);
         
         cl::CommandQueue & queue = gpu_config_.get_equihash_kernel_command_queue();
         cl::Kernel & collision_detection_kernel = gpu_config_.get_equihash_collision_detection_round_kernel();
      
         cl::Buffer & working_table = table_buffer_;
-        cl::Buffer & collision_table = combined_table_buffer_;
+        cl::Buffer & collision_table = collision_table_buffer_;
         cl::Buffer & temp = table_buffer_;
         cl_int zero = 0;
         uint32_t current_table_size = equihash_context_.init_size;
 
         std::cout << "GOING OVER K ROUNDS" << std::endl;
+        cl_int err;
         // Go over K rounds, each time swapping the buffers
-        for(size_t i=0;i<equihash_context_.K;i++)
+        for(uint8_t i=0;i<equihash_context_.K && current_table_size > 0;i++)
         {
-            std::cout << "ROUND " << i << std::endl;
+            std::vector<cl::Event> e(1);
+            std::cout << "ROUND " << (uint32_t)i << std::endl;
             // Set the arguments
-            collision_detection_kernel.setArg(0, context_buffer_);
-            collision_detection_kernel.setArg(1, working_table);
-            collision_detection_kernel.setArg(2, collision_table);
-            collision_detection_kernel.setArg(3, combined_table_size_buffer_);
-            collision_detection_kernel.setArg(4, current_table_size);
-            collision_detection_kernel.setArg(5, i);
-
+            err = collision_detection_kernel.setArg(0, context_buffer_);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = collision_detection_kernel.setArg(1, working_table);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = collision_detection_kernel.setArg(2, collision_table);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = collision_detection_kernel.setArg(3, collision_table_size_buffer_);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = collision_detection_kernel.setArg(4, current_table_size);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = collision_detection_kernel.setArg(5, i);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
             // Run the kernel and wait for it to end
             // Reset the collision table size
-            queue.enqueueFillBuffer(combined_table_size_buffer_, zero, 0, sizeof(uint32_t));
-            queue.enqueueNDRangeKernel(collision_detection_kernel, global_work_offset, 
+            std::cout << "START KER" << std::endl;
+            getchar();
+            err = queue.enqueueFillBuffer(collision_table_size_buffer_, zero, 0, sizeof(uint32_t));
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            // for(int j=0;j<256;j++)
+            err = queue.enqueueNDRangeKernel(collision_detection_kernel, global_work_offset, 
                                    global_work_size, local_work_size, 
-                                   nullptr, &hash_event[0]);
-
-            cl::WaitForEvents(hash_event);
+                                   nullptr, &e[0]);
+            
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            // queue.finish();
+            // std::vector<cl::Event> e {hash_event[i]};
+            cl::WaitForEvents(e);
 
             // Swap the buffers and reset / copy the current size
             temp = working_table;
             working_table = collision_table;
             collision_table = temp;
 
-            cl::copy(combined_table_size_buffer_, &current_table_size, (&current_table_size) + sizeof(uint32_t));
+            cl::copy(queue, collision_table_size_buffer_, &current_table_size, (&current_table_size) + sizeof(uint32_t));
             std::cout << "COL SIZE = " << current_table_size << std::endl;
         }
     }
