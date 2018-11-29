@@ -192,11 +192,29 @@ namespace Equihash
         }
 
         std::cout << "Finished Rounds" << std::endl;
+        // Keep the actual working table pointer for the solutions kernel
+        table_buffer_view_ = &working_table;
     }
 
     void EquihashGPUSolver::enqueue_and_run_solutions_kernel()
     {
+        std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
+        
+        uint32_t size;
+        cl_int zero = 0;
+        uint32_t single_solution_size = sizeof(uint32_t) * (equihash_context_.K + 1);
+        cl::copy(collision_table_size_buffer_, &size, (&size) + sizeof(uint32_t));
 
+        // The solutions buffer can be max the current table size/2
+        solutions_buffer_ = cl::Buffer(
+            gpu_config_.get_context(),
+            CL_MEM_READ_WRITE,
+            (size/2)*single_solution_size
+        );
+
+        device_queues[0].enqueueFillBuffer(solutions_buffer_, zero, 0, (size/2)*single_solution_size);
+
+        // TODO
     }
 
     Proof EquihashGPUSolver::find_proof()
@@ -220,9 +238,10 @@ namespace Equihash
             enqueue_and_run_hash_kernel(nonce);
 
             // Perform the coliision detection
-            // enqueue_and_run_coliision_detection_rounds_kernel();
+            enqueue_and_run_coliision_detection_rounds_kernel();
 
-            return Proof();
+            // Perform the final round and get the solutions
+            enqueue_and_run_solutions_kernel();
         }
 
         return Proof();

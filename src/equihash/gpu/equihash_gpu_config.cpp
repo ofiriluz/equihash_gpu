@@ -72,7 +72,7 @@ namespace Equihash
         {
             return;
         }
-        printf("QWEQW\n");
+
         gpu_used_devices_.clear();
         gpu_devices_queues_.clear();
         compiled_gpu_program_ = cl::Program();
@@ -94,6 +94,7 @@ namespace Equihash
     {
         cl_int err = CL_SUCCESS;
         // std::string source = read_source("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl"); 
+        // Static as temp for now
         std::fstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/equihash/gpu/equihash.cl");
         std::string source = std::string(std::istreambuf_iterator<char>(stream),
                                         (std::istreambuf_iterator<char>()));
@@ -107,8 +108,8 @@ namespace Equihash
             {
                 // Check the build status
                 cl_build_status status = compiled_gpu_program_.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(dev);
-                // if (status != CL_BUILD_ERROR)
-                //     continue;
+                if (status != CL_BUILD_ERROR)
+                    continue;
 
                 // Get the build log
                 std::string name     = dev.getInfo<CL_DEVICE_NAME>();
@@ -143,12 +144,13 @@ namespace Equihash
             std::cout << "Could not retrieve collision kernel" << std::endl;
             return false;
         }
-        // equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_,EQUIHASH_GPU_KERNEL_SOLUTIONS_NAME , &err);
-        // if (err != CL_SUCCESS)
-        // {
-        //     std::cout << "Could not retrieve solutions kernel" << std::endl;
-        //     return false;
-        // }
+
+        equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_, "equihash_solutions_detection" , &err);
+        if (err != CL_SUCCESS)
+        {
+            std::cout << "Could not retrieve solutions kernel" << std::endl;
+            return false;
+        }
 
         return true;
     }
