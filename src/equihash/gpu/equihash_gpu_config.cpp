@@ -45,6 +45,18 @@ namespace Equihash
             // Add them to the devices list
             gpu_used_devices_.insert(
                 std::end(gpu_used_devices_), std::begin(devices), std::end(devices));
+
+            for(auto && device : devices)
+            {
+                gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
+            }
+        }
+
+        for (cl::Device dev : gpu_used_devices_)
+        {
+            size_t size;
+            dev.getInfo(CL_DEVICE_MAX_MEM_ALLOC_SIZE, &size);
+            std::cout << size/(1024*1024) << "MB" << std::endl;
         }
 
         // Create the context
@@ -62,9 +74,9 @@ namespace Equihash
         }
         printf("QWEQW\n");
         gpu_used_devices_.clear();
+        gpu_devices_queues_.clear();
         compiled_gpu_program_ = cl::Program();
         gpu_context_ = cl::Context();
-        equihash_kernel_command_queue_ = cl::CommandQueue();
         equihash_hash_kernel_ = cl::Kernel();
         equihash_collision_detection_round_kernel_ = cl::Kernel();
 
@@ -108,8 +120,7 @@ namespace Equihash
             return false;
         }
 
-        // Create the command queue for equihash
-        equihash_kernel_command_queue_ = cl::CommandQueue(gpu_context_, CL_QUEUE_PROFILING_ENABLE, &err);
+        // Create the command queue for equihash;
         std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
         if (err != CL_SUCCESS)
         {
@@ -162,8 +173,13 @@ namespace Equihash
         return equihash_collision_detection_round_kernel_;
     }
 
-    cl::CommandQueue & EquihashGPUConfig::get_equihash_kernel_command_queue()
+    std::vector<cl::Device> & EquihashGPUConfig::get_devices()
     {
-        return equihash_kernel_command_queue_;
+        return gpu_used_devices_;
+    }
+
+    std::vector<cl::CommandQueue> & EquihashGPUConfig::get_device_queues()
+    {
+        return gpu_devices_queues_;
     }
 }

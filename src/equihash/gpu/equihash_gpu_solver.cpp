@@ -53,12 +53,16 @@ namespace Equihash
 
     void EquihashGPUSolver::prepare_buffers()
     {
+        cl::CommandQueue & queue = gpu_config_.get_device_queues()[0];
+        cl_int zero = 0;
         // Create the hash table s
         table_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             equihash_context_.init_size*equihash_context_.full_width
         );
+        queue.enqueueFillBuffer(table_buffer_, zero, 0, 
+            equihash_context_.init_size*equihash_context_.full_width);
 
         // TODO - Change this
         collision_table_buffer_ = cl::Buffer(
@@ -66,12 +70,16 @@ namespace Equihash
             CL_MEM_READ_WRITE,
             (equihash_context_.init_size/2)*equihash_context_.full_width
         );
+        queue.enqueueFillBuffer(collision_table_buffer_, zero, 0, 
+            (equihash_context_.init_size/2)*equihash_context_.full_width);
 
         collision_table_size_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             sizeof(uint32_t)
         );
+        queue.enqueueFillBuffer(collision_table_size_buffer_, zero, 0, 
+            sizeof(uint32_t));
 
         // Construct the digests buffer for the hashes (256 bits)
         digest_buffer_ = cl::Buffer(
@@ -79,6 +87,8 @@ namespace Equihash
             CL_MEM_READ_ONLY,
             equihash_context_.hash_output
         );
+        queue.enqueueFillBuffer(table_buffer_, zero, 0, 
+            equihash_context_.hash_output);
 
         // Construct the context buffer to be used, will be the same as the gpu structure
         context_buffer_ = cl::Buffer(
@@ -89,7 +99,7 @@ namespace Equihash
 
         // Copy the context to the buffer
         uint8_t * context_pointer = reinterpret_cast<uint8_t*>(&equihash_context_);
-        cl::copy(gpu_config_.get_equihash_kernel_command_queue(),
+        cl::copy(queue,
                  context_pointer, 
                  context_pointer + sizeof(EquihashGPUContext), 
                  context_buffer_);
@@ -97,20 +107,11 @@ namespace Equihash
 
     void EquihashGPUSolver::enqueue_and_run_hash_kernel(uint32_t nonce)
     {
-        std::vector<cl::Event> hash_event(1);
+        std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
+        size_t s = ((equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1)
+                        / device_queues.size();
 
-        // The global work size is equal to 2^S
-        // Offset is set to 0, no need to alter the nonces
-        cl::NDRange global_work_offset = 0;
-        // Go over table size / indices out per hash, since each hash will give us S indices
-        // Rounded up 
-        // printf("%d\n", (equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1);
-        cl::NDRange global_work_size((equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1);
-        cl::NDRange local_work_size(1);
-        // cl::NDRange global_work_size(1);
-        // cl::NDRange local_work_size(1);
-        // Enqueue the buckets and the context to the kernel
-        cl::CommandQueue & queue = gpu_config_.get_equihash_kernel_command_queue();
+        std::cout << s << std::endl;        
         cl::Kernel & hash_kernel = gpu_config_.get_equihash_hash_kernel();
 
         hash_kernel.setArg(0, context_buffer_);
@@ -119,30 +120,32 @@ namespace Equihash
         hash_kernel.setArg(3, equihash_context_.hash_output);
         hash_kernel.setArg(4, nonce);
 
-        // Run the kernel 
-        cl_int err = queue.enqueueNDRangeKernel(hash_kernel, global_work_offset, 
-                                   global_work_size, local_work_size, 
-                                   nullptr, &hash_event[0]);
+        // Run the kernels
+        for(size_t i=0;i<device_queues.size();i++)
+        {
+            device_queues[i].enqueueNDRangeKernel(hash_kernel, 
+                                                 cl::NDRange(i*s),
+                                                 cl::NDRange(s),
+                                                 cl::NullRange);
+            
+            device_queues[i].flush();
+        }
 
-        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-        queue.finish();
-        // Wait for the kernel to end
-        cl::WaitForEvents(hash_event);
-
-        std::cout << "Finished creating hashes" << std::endl;
-        getchar();
+        // Wait for all to end
+        for(size_t i=0;i<device_queues.size();i++)
+        {
+            device_queues[i].finish();
+        }
+        
+        // std::cout << "Finished creating hashes" << std::endl;
+        
     }
 
     void EquihashGPUSolver::enqueue_and_run_coliision_detection_rounds_kernel()
     {
-        std::vector<cl::Event> hash_event(equihash_context_.K);
-        cl::NDRange global_work_offset = 0;
-        cl::NDRange global_work_size(equihash_context_.init_size);
-        // cl::NDRange local_work_size(LOCAL_WORK_GROUP_SIZE);
-        // cl::NDRange global_work_size(1);
-        cl::NDRange local_work_size(32);
+        std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
+        size_t s = equihash_context_.init_size / device_queues.size();
         
-        cl::CommandQueue & queue = gpu_config_.get_equihash_kernel_command_queue();
         cl::Kernel & collision_detection_kernel = gpu_config_.get_equihash_collision_detection_round_kernel();
      
         cl::Buffer & working_table = table_buffer_;
@@ -151,50 +154,44 @@ namespace Equihash
         cl_int zero = 0;
         uint32_t current_table_size = equihash_context_.init_size;
 
-        std::cout << "GOING OVER K ROUNDS" << std::endl;
-        cl_int err;
         // Go over K rounds, each time swapping the buffers
         for(uint8_t i=0;i<equihash_context_.K && current_table_size > 0;i++)
         {
-            std::vector<cl::Event> e(1);
-            std::cout << "ROUND " << (uint32_t)i << std::endl;
             // Set the arguments
-            err = collision_detection_kernel.setArg(0, context_buffer_);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            err = collision_detection_kernel.setArg(1, working_table);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            err = collision_detection_kernel.setArg(2, collision_table);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            err = collision_detection_kernel.setArg(3, collision_table_size_buffer_);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            err = collision_detection_kernel.setArg(4, current_table_size);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            err = collision_detection_kernel.setArg(5, i);
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            // Run the kernel and wait for it to end
-            // Reset the collision table size
-            std::cout << "START KER" << std::endl;
-            getchar();
-            err = queue.enqueueFillBuffer(collision_table_size_buffer_, zero, 0, sizeof(uint32_t));
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            // for(int j=0;j<256;j++)
-            err = queue.enqueueNDRangeKernel(collision_detection_kernel, global_work_offset, 
-                                   global_work_size, local_work_size, 
-                                   nullptr, &e[0]);
-            
-            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
-            // queue.finish();
-            // std::vector<cl::Event> e {hash_event[i]};
-            cl::WaitForEvents(e);
+            collision_detection_kernel.setArg(0, context_buffer_);
+            collision_detection_kernel.setArg(1, working_table);
+            collision_detection_kernel.setArg(2, collision_table);
+            collision_detection_kernel.setArg(3, collision_table_size_buffer_);
+            collision_detection_kernel.setArg(4, current_table_size);
+            collision_detection_kernel.setArg(5, i);
+
+            device_queues[0].enqueueFillBuffer(collision_table_size_buffer_, 
+                                                zero, 0, sizeof(uint32_t));
+            device_queues[0].flush();
+            device_queues[0].finish();
+
+            for(size_t j=0;j<device_queues.size();j++)
+            {
+                device_queues[j].enqueueNDRangeKernel(collision_detection_kernel,
+                                                      cl::NDRange(s*j),
+                                                      cl::NDRange(s));
+                device_queues[j].flush();
+            }
+
+            for(size_t j=0;j<device_queues.size();j++)
+            {
+                device_queues[j].finish();
+            }
 
             // Swap the buffers and reset / copy the current size
             temp = working_table;
             working_table = collision_table;
             collision_table = temp;
 
-            cl::copy(queue, collision_table_size_buffer_, &current_table_size, (&current_table_size) + sizeof(uint32_t));
-            std::cout << "COL SIZE = " << current_table_size << std::endl;
+            cl::copy(collision_table_size_buffer_, &current_table_size, (&current_table_size) + sizeof(uint32_t));
         }
+
+        std::cout << "Finished Rounds" << std::endl;
     }
 
     void EquihashGPUSolver::enqueue_and_run_solutions_kernel()
@@ -211,18 +208,19 @@ namespace Equihash
         // Initialize the context for equihash
         initialize_context();
 
+        // Prepare the GPU buffers
+        prepare_buffers();
+
         uint32_t nonce = 1;
         while(nonce < MAX_NONCE)
         {
             nonce++;
-            // Prepare the GPU buffers
-            prepare_buffers();
 
             // Fill the buffer hashes, note that this will block and run in batches on the GPU
             enqueue_and_run_hash_kernel(nonce);
 
             // Perform the coliision detection
-            enqueue_and_run_coliision_detection_rounds_kernel();
+            // enqueue_and_run_coliision_detection_rounds_kernel();
 
             return Proof();
         }

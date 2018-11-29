@@ -27,11 +27,11 @@ namespace Equihash
         bool is_configured_;
         cl::Context gpu_context_;
         std::vector<cl::Device> gpu_used_devices_;
+        std::vector<cl::CommandQueue> gpu_devices_queues_;
         cl::Program compiled_gpu_program_;
         cl::Kernel equihash_hash_kernel_;
         cl::Kernel equihash_collision_detection_round_kernel_;
         cl::Kernel equihash_solutions_kernel_;
-        cl::CommandQueue equihash_kernel_command_queue_;
 
     private:
         std::string read_source(const std::string & path);
@@ -47,7 +47,8 @@ namespace Equihash
         cl::Program & get_program();
         cl::Kernel & get_equihash_hash_kernel();
         cl::Kernel & get_equihash_collision_detection_round_kernel();
-        cl::CommandQueue & get_equihash_kernel_command_queue();
+        std::vector<cl::Device> & get_devices();
+        std::vector<cl::CommandQueue> & get_device_queues();
     };
 }
 

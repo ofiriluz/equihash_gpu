@@ -225,7 +225,8 @@ kernel void equihash_initialize_hash(global equihash_context * context,
     amount_to_add = min(context->indices_per_hash_output, 
                     context->init_size - index*context->indices_per_hash_output);
 
-    #pragma unroll
+    // #pragma unroll
+    printf("START\n");
     for(i=0;i<context->indices_per_hash_output;i++)
     {
         // Get the current row
@@ -240,7 +241,9 @@ kernel void equihash_initialize_hash(global equihash_context * context,
         // Add the index to the row
         big_endian_index_to_array(array_index,
                                  current_row + context->hash_length);
-    }     
+    }
+
+    // printf("END\n");     
 }
 
 kernel void equihash_collision_detection_round(global equihash_context * context,
