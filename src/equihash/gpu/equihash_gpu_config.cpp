@@ -13,6 +13,17 @@
 
 namespace Equihash
 {
+    void notify_cb(const char * errinfo,const void * privinfo, size_t cb, void * userdata)
+    {
+        std::cout << "ERR OCCURED" << std::endl;
+        std::cout << errinfo << std::endl;
+        for(size_t i=0;i<cb;i++)
+        {
+            std::cout << ((const char *)(privinfo))[i];
+        }
+        std::cout << std::endl;
+    }
+
     EquihashGPUConfig::EquihashGPUConfig(): is_configured_(false)
     {
 
@@ -45,24 +56,28 @@ namespace Equihash
             // Add them to the devices list
             gpu_used_devices_.insert(
                 std::end(gpu_used_devices_), std::begin(devices), std::end(devices));
-
-            for(auto && device : devices)
-            {
-                gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
-            }
         }
 
         for (cl::Device dev : gpu_used_devices_)
         {
-            size_t size;
+            size_t size, local, s;
             dev.getInfo(CL_DEVICE_MAX_MEM_ALLOC_SIZE, &size);
+            dev.getInfo(CL_DEVICE_MAX_WORK_GROUP_SIZE, &local);
+            dev.getInfo(CL_DEVICE_GLOBAL_MEM_SIZE, &s);
             std::cout << size/(1024*1024) << "MB" << std::endl;
+            std::cout << s/(1024*1024) << "MB" << std::endl;
+            std::cout << local << std::endl;
         }
 
         // Create the context
         cl_int err;
-        gpu_context_ = cl::Context(gpu_used_devices_, NULL, NULL, NULL, &err);
-        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+        gpu_context_ = cl::Context(gpu_used_devices_, NULL, notify_cb, NULL, &err);
+        
+        for(auto && device : gpu_used_devices_)
+        {
+            gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
+        }
+
         is_configured_ = true;
     }
 
@@ -101,7 +116,7 @@ namespace Equihash
 
         // Create the program and load the .cl files
         compiled_gpu_program_ = cl::Program(gpu_context_, source, true, &err);
-        std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+        // compiled_gpu_program_.build("-cl-opt-disable")
         if (err != CL_SUCCESS)
         {
             for (cl::Device dev : gpu_used_devices_)
@@ -145,12 +160,12 @@ namespace Equihash
             return false;
         }
 
-        equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_, "equihash_solutions_detection" , &err);
-        if (err != CL_SUCCESS)
-        {
-            std::cout << "Could not retrieve solutions kernel" << std::endl;
-            return false;
-        }
+        // equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_, "equihash_solutions_detection" , &err);
+        // if (err != CL_SUCCESS)
+        // {
+        //     std::cout << "Could not retrieve solutions kernel" << std::endl;
+        //     return false;
+        // }
 
         return true;
     }

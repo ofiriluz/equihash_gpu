@@ -157,7 +157,7 @@ int main(int argc, char ** argv)
 
             // Create a cl buffers that we will enqueue 
             cl::Buffer inMessage = cl::Buffer(context, std::begin(message), std::end(message), true, false &err);;
-            cl::Buffer outHash(context, CL_MEM_WRITE_ONLY, 512, nullptr, &err);
+            cl::Buffer outHash(context, CL_MEM_WRITE_ONLY, 64, nullptr, &err);
 
             // Read the .cl file
             std::ifstream stream("/home/ofir/Desktop/Equihash/equihash_gpu/include/equihash_gpu/blake2b/blake2b.cl");
@@ -187,23 +187,25 @@ int main(int argc, char ** argv)
             cl::CommandQueue queue(context, 0, &err);
 
             // Create the gpu function 
-            auto blake2b_kernel = cl::make_kernel<cl::Buffer, cl::Buffer, uint64_t, uint8_t>(testProgram, "blake2b_gpu_hash", &err);
+            auto blake2b_kernel = cl::make_kernel<cl::Buffer, cl::Buffer, uint32_t, uint32_t>(testProgram, "blake2b_gpu_hash", &err);
             // Run the kernel K times just to simulate K hashes
             Timer kernel;
-            blake2b_kernel(cl::EnqueueArgs(queue, 100000), inMessage, outHash, message.size(), 64);
+            blake2b_kernel(cl::EnqueueArgs(queue, 1), inMessage, outHash, message.size(), 64);
 
             queue.finish();
             int64_t t1 = kernel.elapsed();
             std::cout << "Kernel Elapsed time = " << t1 << std::endl;
 
             // Copy the results to the host memory
-            cl::copy(queue, outHash, std::begin(outputHashResult), std::end(outputHashResult));
-            std::stringstream hex_stream;
+            uint8_t h[64];
+            queue.enqueueReadBuffer(outHash, true, 0, 64, h);
+            // cl::copy(queue, outHash, std::begin(outputHashResult), std::end(outputHashResult));
+            std::stringstream hex_stream, hex2s;
             hex_stream << std::hex;
             
             for(int i=0;i<64;++i)
             {
-                hex_stream << static_cast<int>(outputHashResult[i]);
+                hex_stream << static_cast<int>(h[i]);
             }
 
             std::string res = hex_stream.str();
@@ -215,11 +217,17 @@ int main(int argc, char ** argv)
             size_t s = message.length();
             uint8_t out[64];
             Timer blake;
-            for(int i=0;i<100000;i++)
+            for(int i=0;i<1;i++)
             {
                 blake2b(out, msg, NULL, 64, s, 0);
             }
+            hex2s << std::hex;
+            for(int i=0;i<64;++i)
+            {
+                hex2s << static_cast<int>(out[i]);
+            }
             int64_t t2 = blake.elapsed();
+            std::cout << "HASH = " << hex2s.str() << std::endl;
             std::cout << "Blake Elapsed time = " << t2 << std::endl;
 
             std::cout << "Simple bench rate diff [MS] = " << (t2-t1)/1000000 << std::endl; 

@@ -17,11 +17,13 @@
 #include <array>
 #include "equihash_gpu/equihash/equihash_solver.h"
 #include "equihash_gpu/equihash/gpu/equihash_gpu_config.h"
+#include <blake2.h>
 
 #define SEED_SIZE 4 // 4x32bit
 #define MAX_BUCKET_AMOUNT 5
 #define LOCAL_WORK_GROUP_SIZE 64
 #define MAX_NONCE 0xFFFFF
+#define HASH_BLOCK_SIZE 128
 
 namespace Equihash
 {
@@ -38,7 +40,15 @@ namespace Equihash
         uint32_t init_size;
         uint32_t solution_size;
 
-        uint8_t seed[SEED_SIZE+2]; // Later for nonce and index
+        uint32_t seed[SEED_SIZE]; // Later for nonce and index
+    };
+
+    struct BlakeDummy
+    {
+        uint64_t hash_state[8];
+        uint8_t  buf[2*HASH_BLOCK_SIZE];
+        uint32_t buflen;
+        uint64_t t[2];
     };
 
     class EquihashGPUSolver : public IEquihashSolver
@@ -49,6 +59,7 @@ namespace Equihash
 
         // OpenCL buffers to be used
         cl::Buffer table_buffer_;
+        cl::Buffer table_size_buffer_;
         cl::Buffer * table_buffer_view_;
         cl::Buffer collision_table_buffer_;
         cl::Buffer collision_table_size_buffer_;

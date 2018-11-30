@@ -28,7 +28,9 @@ typedef          long   int64_t;
 typedef struct
 {
   uint64_t hash_state[8];
-  uint64_t bytes_compressed;
+  uint8_t  buf[2*HASH_BLOCK_SIZE];
+  uint32_t buflen;
+  uint64_t t[2];
 } blake2b_state;
 
 constant uint8_t blake2b_sigma[12][16] =
@@ -47,20 +49,46 @@ constant uint8_t blake2b_sigma[12][16] =
   { 14, 10,  4,  8,  9, 15, 13,  6,  1, 12,  0,  2, 11,  7,  5,  3 }
 };
 
-
-// Finalizes the hash and output it to the output buffer on big endian
-void blake2b_finalize_hash(private blake2b_state * state, global uint64_t * out_hash, uint8_t out_hash_size)
+void blake2b_copy_glob(private uint8_t * dest, global uint8_t * src, uint32_t s)
 {
-  private int i;
-
-  // Max is 64, do not allow past it (Might change to stop right at the start)
-  out_hash_size = (out_hash_size > OUT_HASH_LENGTH ? OUT_HASH_LENGTH : out_hash_size) / 8;
-
-  // Output to result [TODO - Might need to add little to big endian for some gpus]
-  for(i=0;i<out_hash_size;i++) 
+  uint32_t i=0;
+  for(i=0;i<s;i++)
   {
-    out_hash[i] = state->hash_state[i];
+    dest[i] = src[i];
   }
+}
+
+void blake2b_copy_glob2(global uint8_t * dest, private uint8_t * src, uint32_t s)
+{
+  uint32_t i=0;
+  for(i=0;i<s;i++)
+  {
+    dest[i] = src[i];
+  }
+}
+
+void blake2b_copy_priv(private uint8_t * dest, private uint8_t * src, uint32_t s)
+{
+  uint32_t i=0;
+  for(i=0;i<s;i++)
+  {
+    dest[i] = src[i];
+  }
+}
+
+void blake2b_memset(private uint8_t * buf, uint8_t pat, uint32_t s)
+{
+  uint32_t i=0;
+  for(i=0;i<s;i++)
+  {
+    buf[i] = pat;
+  }
+}
+
+void blake2b_increment(private blake2b_state * state, uint32_t inc)
+{
+  state->t[0] += inc;
+  state->t[1] += ( state->t[0] < inc );
 }
 
 // Perform the actual compression mixin on the given work vector and words
@@ -119,7 +147,7 @@ void blake2b_perform_compression(private blake2b_state * state,
 
 // Compression of the given chunk based on the current hash state
 void blake2b_compress_chunk(private blake2b_state * state, 
-                            global const uint8_t * chunk,
+                            private const uint8_t * chunk,
                             private uint8_t chunk_size,
                             private bool is_last_chunk)
 {
@@ -133,7 +161,7 @@ void blake2b_compress_chunk(private blake2b_state * state,
   #pragma unroll 16
   for(i=0;i<(chunk_size/8);++i)
   {
-    words[i] = *((global uint64_t*)&chunk[i*8]);
+    words[i] = *((private uint64_t*)&chunk[i*8]);
   } 
 
   // Initialize the work vector with the current hash
@@ -155,8 +183,8 @@ void blake2b_compress_chunk(private blake2b_state * state,
   work_vector[15] = 0x5BE0CD19137E2179;
 
   // Mix byte counter, Only support 64bit for now [TODO - Change bytes_compressed to two 64bit]
-  work_vector[12] ^= state->bytes_compressed;
-  // work_vector[13] ^= 0x0000000000000000;
+  work_vector[12] ^= state->t[0];
+  work_vector[13] ^= state->t[1];
 
   if(is_last_chunk)
   {
@@ -167,32 +195,110 @@ void blake2b_compress_chunk(private blake2b_state * state,
   blake2b_perform_compression(state, work_vector, words);
 }
 
-void blake2b_update(private blake2b_state * state,
-                    global const uint8_t * in_message, 
-                    const uint64_t message_size)
+// Finalizes the hash and output it to the output buffer on big endian
+void blake2b_finalize_hash_priv(private blake2b_state * state, private uint8_t * out_hash, uint8_t out_hash_size)
 {
-  // Store bytes remaining to be more efficient instead of calculating each time
-  private uint64_t bytes_remaining = message_size;
-  global const uint8_t * chunk;
-
-  // Run in 128 bytes chunk and compress each chunk
-  while(bytes_remaining > HASH_BLOCK_SIZE)
+  uint32_t i;
+  if(state->buflen > HASH_BLOCK_SIZE)
   {
-    // Get reference to the chunk and treat it as 64bit words
-    chunk = &(in_message[state->bytes_compressed]);
-
-    // Update the bytes compressed / remaining
-    state->bytes_compressed += HASH_BLOCK_SIZE;
-    bytes_remaining -= HASH_BLOCK_SIZE;
-
-    // Compress the chunk
-    blake2b_compress_chunk(state, chunk, HASH_BLOCK_SIZE, false);
+    blake2b_increment(state, HASH_BLOCK_SIZE);
+    blake2b_compress_chunk(state, state->buf , HASH_BLOCK_SIZE, false);
+    state->buflen -= HASH_BLOCK_SIZE;
+    blake2b_copy_priv(state->buf, state->buf + HASH_BLOCK_SIZE, HASH_BLOCK_SIZE);
   }
 
-  // Compress the last chunk
-  chunk = &(in_message[state->bytes_compressed]);
-  state->bytes_compressed += bytes_remaining;
-  blake2b_compress_chunk(state, chunk, bytes_remaining, true);
+  blake2b_increment(state, state->buflen);
+  blake2b_memset(state->buf + state->buflen, 0, 2*HASH_BLOCK_SIZE - state->buflen);
+  blake2b_compress_chunk(state, state->buf , HASH_BLOCK_SIZE, true);
+  blake2b_copy_priv(out_hash, (private uint8_t*)state->hash_state, out_hash_size);
+}
+
+// Finalizes the hash and output it to the output buffer on big endian
+void blake2b_finalize_hash(private blake2b_state * state, global uint8_t * out_hash, uint8_t out_hash_size)
+{
+  uint32_t i;
+  if(state->buflen > HASH_BLOCK_SIZE)
+  {
+    blake2b_increment(state, HASH_BLOCK_SIZE);
+    blake2b_compress_chunk(state, state->buf , HASH_BLOCK_SIZE, false);
+    state->buflen -= HASH_BLOCK_SIZE;
+    blake2b_copy_priv(state->buf, state->buf + HASH_BLOCK_SIZE, HASH_BLOCK_SIZE);
+  }
+
+  blake2b_increment(state, state->buflen);
+  blake2b_memset(state->buf + state->buflen, 0, 2*HASH_BLOCK_SIZE - state->buflen);
+  blake2b_compress_chunk(state, state->buf , HASH_BLOCK_SIZE, true);
+  blake2b_copy_glob2(out_hash, (private uint8_t*)state->hash_state, out_hash_size);
+}
+
+void blake2b_update(private blake2b_state * state,
+                    global uint8_t * in_message, 
+                    private uint32_t in_len)
+{
+  // Store bytes remaining to be more efficient instead of calculating each time
+  global const uint8_t * chunk;
+  private uint32_t left, fill;
+
+  // Run in 128 bytes chunk and compress each chunk
+  while(in_len > 0)
+  {
+    left = state->buflen;
+    fill = 2*HASH_BLOCK_SIZE - left;
+
+    if(in_len > fill)
+    {
+      blake2b_copy_glob(state->buf + left, in_message, fill);
+      state->buflen += fill;
+      blake2b_increment(state, HASH_BLOCK_SIZE);
+      blake2b_compress_chunk(state, state->buf, HASH_BLOCK_SIZE, false);
+      blake2b_copy_priv(state->buf, state->buf + HASH_BLOCK_SIZE, HASH_BLOCK_SIZE);
+      state->buflen -= HASH_BLOCK_SIZE;
+      in_message += fill;
+      in_len -= fill;
+    }
+    else
+    {
+      blake2b_copy_glob(state->buf + left, in_message, in_len );
+      state->buflen += ( uint32_t ) in_len; // Be lazy, do not compress
+      in_message += in_len;
+      in_len -= in_len;
+    }
+  }
+}
+
+void blake2b_update_priv(private blake2b_state * state,
+                    private uint8_t * in_message, 
+                    private uint32_t in_len)
+{
+  // Store bytes remaining to be more efficient instead of calculating each time
+  private const uint8_t * chunk;
+  private uint32_t left, fill;
+
+  // Run in 128 bytes chunk and compress each chunk
+  while(in_len > 0)
+  {
+    left = state->buflen;
+    fill = 2*HASH_BLOCK_SIZE - left;
+
+    if(in_len > fill)
+    {
+      blake2b_copy_priv(state->buf + left, in_message, fill);
+      state->buflen += fill;
+      blake2b_increment(state, HASH_BLOCK_SIZE);
+      blake2b_compress_chunk(state, state->buf, HASH_BLOCK_SIZE, false);
+      blake2b_copy_priv(state->buf, state->buf + HASH_BLOCK_SIZE, HASH_BLOCK_SIZE);
+      state->buflen -= HASH_BLOCK_SIZE;
+      in_message += fill;
+      in_len -= fill;
+    }
+    else
+    {
+      blake2b_copy_priv(state->buf + left, in_message, in_len );
+      state->buflen += ( uint32_t ) in_len; // Be lazy, do not compress
+      in_message += in_len;
+      in_len -= in_len;
+    }
+  }
 }
 
 // Initialization vector for blake2b hash state
@@ -207,7 +313,9 @@ void blake2b_init(private blake2b_state * state)
   state->hash_state[6] = 0x1F83D9ABFB41BD6B;
   state->hash_state[7] = 0x5BE0CD19137E2179;
 
-  state->bytes_compressed = 0;
+  state->t[0] = 0;
+  state->t[1] = 0;
+  state->buflen = 0;
 }
 
 // GPU Hash impl of blake2b, receives as input:
@@ -218,9 +326,9 @@ void blake2b_init(private blake2b_state * state)
 // Notes:
 // Extra hash key is not supported yet
 kernel void blake2b_gpu_hash(global const uint8_t * in_message, 
-                             global uint64_t * out_hash, 
-                             const uint64_t message_size,
-                             const uint8_t out_hash_size)
+                             global uint8_t * out_hash, 
+                             const uint32_t message_size,
+                             const uint32_t out_hash_size)
 {
   // Create the state to be used as local memory
   private blake2b_state state;

@@ -18,7 +18,7 @@ typedef struct
     uint32_t init_size;
     uint32_t solution_size;
 
-    uint8_t seed[SEED_SIZE+2]; // Later for nonce and index
+    uint32_t seed[SEED_SIZE]; // Later for nonce and index
 
 } equihash_context;
 
@@ -70,7 +70,7 @@ void compress_array(global uint8_t * in,
     }    
 }
 
-void expand_array(global uint8_t * in, 
+void expand_array(private uint8_t * in, 
                   const uint32_t size_in, 
                   global uint8_t * out, 
                   const uint32_t size_out,
@@ -124,20 +124,16 @@ void expand_array(global uint8_t * in,
     }
 }
 
-bool has_collision(global uint8_t * a, global uint8_t * b, uint32_t bits)
+bool has_collision(global uint8_t * a, global uint8_t * b, uint32_t bytes)
 {
-    uint8_t u1, u2;
-
-    for ( ; bits-- ; a++, b++) 
+    for (;bytes--;a++,b++) 
     {
-        u1 = * (global uint8_t *) a;
-        u2 = * (global uint8_t *) b;
-        if (u1 != u2)
+        if ((*a) != (*b))
         {
-            return (u1-u2);
+            return false;
         }
     }
-    return 0;
+    return true;
 }
 
 bool distinct_indices(global uint8_t * a, global uint8_t * b, const uint32_t len, const uint32_t len_indices)
@@ -147,7 +143,7 @@ bool distinct_indices(global uint8_t * a, global uint8_t * b, const uint32_t len
     {
         for(j=0;j<len_indices;j++)
         {
-            if(((global uint32_t*)a)[len + i*sizeof(uint32_t)] == ((global uint32_t*)b)[len + j*sizeof(uint32_t)])
+            if(has_collision(a + len + i*(sizeof(uint32_t)), b + len + j*(sizeof(uint32_t)), sizeof(uint32_t)))
             {
                 return false;
             }
@@ -157,17 +153,11 @@ bool distinct_indices(global uint8_t * a, global uint8_t * b, const uint32_t len
     return true;
 }
 
-bool indices_before(global uint8_t * a, global uint8_t * b, const uint32_t len, const uint32_t len_indices)
+bool indices_before(global uint8_t * a, global uint8_t * b, uint32_t len_indices)
 {
-    private uint32_t i;
-    #pragma unroll
-    for(i=0;i<len_indices*sizeof(uint32_t);i++)
+    for (;len_indices--;a++,b++) 
     {
-        if(a[i] < b[i])
-        {
-            return false;
-        }
-        else if(a[i] > b[i])
+        if ((*a) < (*b))
         {
             return true;
         }
@@ -197,10 +187,10 @@ void combine_rows(global uint8_t * dest,
     #pragma unroll
     for (i = trim; i < len; i++)
     {
-		dest[i - trim] = a[i] ^ b[i];
+        dest[i-trim] = a[i] ^ b[i];
     }
     
-    if(indices_before(a, b, len, len_indices))
+    if(indices_before(a+len, b+len, len_indices))
     {
         copy_indices(dest + len - trim, a + len, len_indices);
         copy_indices(dest + len - trim + len_indices, b + len, len_indices);
@@ -214,12 +204,12 @@ void combine_rows(global uint8_t * dest,
 
 void big_endian_index_to_array(uint32_t i, global uint8_t * array)
 {   
-    private uint32_t le_i = ENDIAN_SWAP(i);
-    private uint8_t j;
+    // private uint32_t le_i = ENDIAN_SWAP(i);
+    private uint32_t j;
     #pragma unroll
     for(j=0;j<sizeof(i);j++)
     {
-        array[j] = (le_i << (8*j));
+        array[j] = (i << (8*j));
     }
 }
 
@@ -236,26 +226,37 @@ void store_solution_indices(global uint8_t * hash,
     compress_array(hash + len, indices_len, row, min_len, bits_len + 1, padding);
 }
 
+bool is_zero(global uint8_t * a, uint32_t len)
+{
+    for(;len--;a++)
+    {
+        if(a[len] != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 kernel void equihash_initialize_hash(global equihash_context * context,
                                      global uint8_t * hash_table,
-                                     global uint8_t * digest,
-                                     const uint32_t digest_size,
+                                     global blake2b_state * s,
                                      const uint32_t nonce)
-{   
+{
     // The index to be used is the global work index
+    private uint8_t digest[HASH_BLOCK_SIZE];
     private uint32_t index = get_global_id(0);
+    private uint32_t le_i = ENDIAN_SWAP(index);
     private uint8_t i, j, k;
     private uint8_t amount_to_add;
     private uint32_t array_index;
     global uint8_t * start_row;
     global uint8_t * current_row;
 
-    // // Fill the context seed nonce and index
-    context->seed[SEED_SIZE] = nonce;
-    context->seed[SEED_SIZE+1] = index;
-    
-    // Calculate the blake hash
-    blake2b_gpu_hash(context->seed, (global uint64_t*)digest, sizeof(context->seed), digest_size);
+    private blake2b_state s_priv = *s;
+    blake2b_update_priv(&s_priv, (private uint8_t*)&index, sizeof(index));
+    blake2b_finalize_hash_priv(&s_priv, (private uint64_t*)digest, context->hash_output);
     
     // Get the pointer to the first row in this set of rows
     start_row = hash_table + 
@@ -267,53 +268,56 @@ kernel void equihash_initialize_hash(global equihash_context * context,
                     context->init_size - index*context->indices_per_hash_output);
 
     #pragma unroll
-    for(i=0;i<context->indices_per_hash_output;i++)
+    for(i=0;i<amount_to_add;i++)
     {
         // Get the current row
-        current_row = start_row + context->full_width*i*index;
-
+        current_row = start_row + context->full_width*i;
+        
         // Split the block and put it on the fitting row in the hash table
         expand_array(digest + (i*context->N/8), context->N/8, 
                      current_row, 
                      context->hash_length, context->collision_bits_length, 0);
 
         array_index = (index*context->indices_per_hash_output)+i;
+
         // Add the index to the row
         big_endian_index_to_array(array_index,
                                  current_row + context->hash_length);
-    }     
+    } 
 }
 
-kernel void equihash_collision_detection_round(global equihash_context * context,
+kernel void equihash_collision_detection_round(constant equihash_context * context,
                                                global uint8_t * working_table,
                                                global uint8_t * collision_table,
                                                global uint32_t * collision_table_size,
                                                const uint32_t working_table_size,
                                                const uint8_t collision_round)
 {
+    // printf("TABLE S = %d\n", working_table_size);
     private uint32_t row_index = get_global_id(0);
     global uint8_t * row = working_table + (context->full_width*row_index);
     global uint8_t * selected_row;
     global uint8_t * target_row;
-    private uint32_t i;
+    private bool t, t2;
+    private uint32_t i, j;
     private uint32_t target_row_index;
 
     // Calculate the current hash length and indices length for this round
     private uint32_t hash_len = context->hash_length - 
                                 (collision_round*context->collision_bytes_length);
-    private uint32_t indices_len = (1 << collision_round) * sizeof(uint32_t); 
     
+    // Length in bytes
+    private uint32_t indices_len = (1 << collision_round)*sizeof(uint32_t);    
+
     // We go over the working row up until the end and find collision
     // This is a naive solution but paralled
-    printf("WORK SIZE = %d\n", working_table_size);
-    printf("%d\n", row_index);
-    printf("HASH LEN = %d\n", hash_len);
+    #pragma unroll
     for(i=row_index+1;i<working_table_size;i++)
     {
         selected_row = working_table + (context->full_width*i);
         if(has_collision(row, selected_row, context->collision_bytes_length)
             &&
-           distinct_indices(row, selected_row, hash_len, indices_len))
+           distinct_indices(row, selected_row, hash_len, indices_len/sizeof(uint32_t)))
         {
             // Acquire the index 
             target_row_index = atomic_inc(collision_table_size);
