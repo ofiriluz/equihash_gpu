@@ -66,7 +66,7 @@ int main(int argc, char ** argv)
         }
     }
 
-    printf("N = %d\n", k);
+    printf("N = %d\n", n);
     printf("K = %d\n", k);
     printf("Seed = ");
     for(size_t j=0;j<SEED_SIZE;j++)

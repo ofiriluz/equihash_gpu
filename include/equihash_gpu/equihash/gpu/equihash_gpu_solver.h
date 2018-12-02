@@ -18,6 +18,7 @@
 #include "equihash_gpu/equihash/equihash_solver.h"
 #include "equihash_gpu/equihash/gpu/equihash_gpu_config.h"
 #include <blake2.h>
+#include <algorithm>
 
 #define SEED_SIZE 4 // 4x32bit
 #define MAX_BUCKET_AMOUNT 5
@@ -43,7 +44,7 @@ namespace Equihash
         uint32_t seed[SEED_SIZE]; // Later for nonce and index
     };
 
-    struct BlakeDummy
+    struct BlakeGPU
     {
         uint64_t hash_state[8];
         uint8_t  buf[2*HASH_BLOCK_SIZE];
@@ -59,26 +60,26 @@ namespace Equihash
 
         // OpenCL buffers to be used
         cl::Buffer table_buffer_;
-        cl::Buffer table_size_buffer_;
-        cl::Buffer * table_buffer_view_;
         cl::Buffer collision_table_buffer_;
         cl::Buffer collision_table_size_buffer_;
         cl::Buffer solutions_buffer_;
+        cl::Buffer solutions_size_buffer_;
         cl::Buffer digest_buffer_;
         cl::Buffer context_buffer_;
 
     private:
+        BlakeGPU create_initial_digest(size_t nonce);
         void initialize_context();
         void prepare_buffers();
-        void enqueue_and_run_hash_kernel(uint32_t nonce);
-        void enqueue_and_run_coliision_detection_rounds_kernel();
-        void enqueue_and_run_solutions_kernel();
+        void enqueue_and_run_hash_kernel(size_t nonce);
+        bool enqueue_and_run_coliision_detection_rounds_kernel();
+        std::vector<Proof> enqueue_and_run_solutions_kernel(size_t nonce);
 
     public:
-        EquihashGPUSolver(uint16_t N, uint16_t K, uint32_t seed[SEED_SIZE]);
+        EquihashGPUSolver(uint32_t N, uint32_t K, uint32_t seed[SEED_SIZE]);
         virtual ~EquihashGPUSolver();
 
-        virtual Proof find_proof() override;
+        virtual std::vector<Proof> find_proof() override;
         virtual bool verify_proof(const Proof & proof) override;
     };
 }

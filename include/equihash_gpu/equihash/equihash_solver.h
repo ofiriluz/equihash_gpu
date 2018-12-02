@@ -22,7 +22,7 @@ namespace Equihash
         IEquihashSolver(){}
         virtual ~IEquihashSolver(){}
 
-        virtual Proof find_proof() = 0;
+        virtual std::vector<Proof> find_proof() = 0;
         virtual bool verify_proof(const Proof & proof) = 0;
     };
 }

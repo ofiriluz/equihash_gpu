@@ -158,7 +158,7 @@ void blake2b_compress_chunk(private blake2b_state * state,
 
   // Perform big to little endian on each word
   // Roll it out to max 16 (128)
-  #pragma unroll 16
+  // #pragma unroll 16
   for(i=0;i<(chunk_size/8);++i)
   {
     words[i] = *((private uint64_t*)&chunk[i*8]);

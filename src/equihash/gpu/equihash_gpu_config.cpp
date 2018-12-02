@@ -76,6 +76,9 @@ namespace Equihash
         for(auto && device : gpu_used_devices_)
         {
             gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
+            // gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
+            // gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
+            // gpu_devices_queues_.push_back(cl::CommandQueue(get_context(), device));
         }
 
         is_configured_ = true;
@@ -160,12 +163,12 @@ namespace Equihash
             return false;
         }
 
-        // equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_, "equihash_solutions_detection" , &err);
-        // if (err != CL_SUCCESS)
-        // {
-        //     std::cout << "Could not retrieve solutions kernel" << std::endl;
-        //     return false;
-        // }
+        equihash_solutions_kernel_ = cl::Kernel(compiled_gpu_program_, "equihash_solutions_detection" , &err);
+        if (err != CL_SUCCESS)
+        {
+            std::cout << "Could not retrieve solutions kernel" << std::endl;
+            return false;
+        }
 
         return true;
     }
@@ -188,6 +191,11 @@ namespace Equihash
     cl::Kernel & EquihashGPUConfig::get_equihash_collision_detection_round_kernel()
     {
         return equihash_collision_detection_round_kernel_;
+    }
+
+    cl::Kernel & EquihashGPUConfig::get_equihash_solutions_kernel()
+    {
+        return equihash_solutions_kernel_;
     }
 
     std::vector<cl::Device> & EquihashGPUConfig::get_devices()

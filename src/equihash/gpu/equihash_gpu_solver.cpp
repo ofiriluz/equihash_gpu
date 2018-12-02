@@ -12,10 +12,46 @@
 #include "equihash_gpu/equihash/gpu/equihash_gpu_solver.h"
 #include <unistd.h>
 #include <stdlib.h>
+#define UNW_LOCAL_ONLY
+#include <cxxabi.h>
+#include <libunwind.h>
+
+void backtrace() {
+  unw_cursor_t cursor;
+  unw_context_t context;
+
+  // Initialize cursor to current frame for local unwinding.
+  unw_getcontext(&context);
+  unw_init_local(&cursor, &context);
+
+  // Unwind frames one by one, going up the frame stack.
+  while (unw_step(&cursor) > 0) {
+    unw_word_t offset, pc;
+    unw_get_reg(&cursor, UNW_REG_IP, &pc);
+    if (pc == 0) {
+      break;
+    }
+    std::printf("0x%lx:", pc);
+
+    char sym[256];
+    if (unw_get_proc_name(&cursor, sym, sizeof(sym), &offset) == 0) {
+      char* nameptr = sym;
+      int status;
+      char* demangled = abi::__cxa_demangle(sym, nullptr, nullptr, &status);
+      if (status == 0) {
+        nameptr = demangled;
+      }
+      std::printf(" (%s+0x%lx)\n", nameptr, offset);
+      std::free(demangled);
+    } else {
+      std::printf(" -- error: unable to obtain symbol name for this frame\n");
+    }
+  }
+}
 
 namespace Equihash
 {
-    EquihashGPUSolver::EquihashGPUSolver(uint16_t N, uint16_t K, uint32_t seed[SEED_SIZE])
+    EquihashGPUSolver::EquihashGPUSolver(uint32_t N, uint32_t K, uint32_t seed[SEED_SIZE])
     {
         equihash_context_.N = N;
         equihash_context_.K = K;
@@ -37,9 +73,9 @@ namespace Equihash
         equihash_context_.collision_bytes_length = (equihash_context_.collision_bits_length+7)/8;
         // Jump between each block of bits - (k+1) * collisionBytesLength
         equihash_context_.hash_length = (equihash_context_.K+1) * equihash_context_.collision_bytes_length;
-        // Number of parts to dervice blocks from the hash - blake_bits(512) / N
+        // Number of parts to derive blocks from the hash - blake_bits(512) / N
         equihash_context_.indices_per_hash_output = 512 / equihash_context_.N;
-        // Blake output size in bytes (64)
+        // Blake output size in bytes
         equihash_context_.hash_output = equihash_context_.indices_per_hash_output*equihash_context_.N / 8;
         // Width of a single row in the hash table - sizeof(uint32) * (2^(k-1)) + 2*collisionByteLength
         equihash_context_.full_width = sizeof(uint32_t) * (1 << (equihash_context_.K-1)) + 2*equihash_context_.collision_bytes_length;
@@ -74,12 +110,12 @@ namespace Equihash
             equihash_context_.init_size*equihash_context_.full_width*2
         );
 
-        table_size_buffer_ = cl::Buffer(
+        solutions_size_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
             sizeof(uint32_t)
         );
-        queue.enqueueFillBuffer(table_size_buffer_, zero, 0, 
+        queue.enqueueFillBuffer(solutions_size_buffer_, zero, 0, 
             sizeof(uint32_t));
 
         // TODO - Change this to a more reasonable buffer
@@ -97,17 +133,15 @@ namespace Equihash
             CL_MEM_READ_WRITE,
             sizeof(uint32_t)
         );
-        queue.enqueueFillBuffer(collision_table_size_buffer_, zero, 0, 
-            sizeof(uint32_t));
 
         // Construct the digests buffer for the hashes (256 bits)
         digest_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
-            sizeof(BlakeDummy)
+            sizeof(BlakeGPU)
         );
-        queue.enqueueFillBuffer(table_buffer_, zero, 0, 
-            sizeof(BlakeDummy));
+        queue.enqueueFillBuffer(digest_buffer_, zero, 0, 
+            sizeof(BlakeGPU));
 
         // Construct the context buffer to be used, will be the same as the gpu structure
         context_buffer_ = cl::Buffer(
@@ -117,16 +151,12 @@ namespace Equihash
         );
 
         // Copy the context to the buffer
-        queue.enqueueWriteBuffer(context_buffer_, true, 0, sizeof(EquihashGPUContext), &equihash_context_);
+        queue.enqueueWriteBuffer(context_buffer_, false, 0, sizeof(EquihashGPUContext), &equihash_context_);
     }
 
-    void EquihashGPUSolver::enqueue_and_run_hash_kernel(uint32_t nonce)
+    BlakeGPU EquihashGPUSolver::create_initial_digest(size_t nonce)
     {
-        std::cout << "Starting to create hashes" << std::endl;
-        std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
-
-        // TODO - Switch this to a more proper version
-        blake2b_state dummy_s;
+        blake2b_state blake_state;
         blake2b_param P[1];
         memset(P, 0, sizeof(blake2b_param));
         P->fanout = 1;
@@ -135,16 +165,26 @@ namespace Equihash
         memcpy(P->personal, "ZcashPoW", 8);
         *(uint32_t *)(P->personal +  8) = htole32(equihash_context_.N);
         *(uint32_t *)(P->personal + 12) = htole32(equihash_context_.K);
-        blake2b_init_param(&dummy_s, P);
-        blake2b_update(&dummy_s, (uint8_t*)equihash_context_.seed, SEED_SIZE*sizeof(uint32_t));
-        BlakeDummy dummy;
-        memcpy(dummy.hash_state, dummy_s.h, sizeof(uint64_t)*8);
-        memcpy(dummy.buf, dummy_s.buf, dummy_s.buflen);
-        dummy.t[0] = dummy_s.t[0];
-        dummy.t[1] = dummy_s.t[1];
-        dummy.buflen = dummy_s.buflen;
+        blake2b_init_param(&blake_state, P);
+        blake2b_update(&blake_state, (uint8_t*)equihash_context_.seed, SEED_SIZE*sizeof(uint32_t));
+        blake2b_update(&blake_state, (uint8_t*)&nonce, sizeof(uint32_t));
+        BlakeGPU blake_gpu;
+        memcpy(blake_gpu.hash_state, blake_state.h, sizeof(uint64_t)*8);
+        memcpy(blake_gpu.buf, blake_state.buf, blake_state.buflen);
+        blake_gpu.t[0] = blake_state.t[0];
+        blake_gpu.t[1] = blake_state.t[1];
+        blake_gpu.buflen = blake_state.buflen;
 
-        device_queues[0].enqueueWriteBuffer(digest_buffer_, true, 0, sizeof(BlakeDummy), &dummy);
+        return blake_gpu;
+    }
+
+    void EquihashGPUSolver::enqueue_and_run_hash_kernel(size_t nonce)
+    {
+        std::cout << "Starting to create hashes" << std::endl;
+        std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
+
+        BlakeGPU blake = create_initial_digest(nonce);
+        device_queues[0].enqueueWriteBuffer(digest_buffer_, true, 0, sizeof(BlakeGPU), &blake);
         
         size_t s = ((equihash_context_.init_size / equihash_context_.indices_per_hash_output) + 1)
                         / device_queues.size();
@@ -154,7 +194,6 @@ namespace Equihash
         hash_kernel.setArg(0, context_buffer_);
         hash_kernel.setArg(1, table_buffer_);
         hash_kernel.setArg(2, digest_buffer_);
-        hash_kernel.setArg(3, nonce);
 
         // Run the kernels
         for(size_t i=0;i<device_queues.size();i++)
@@ -179,23 +218,23 @@ namespace Equihash
         std::cout << "Finished creating hashes" << std::endl;
     }
 
-    void EquihashGPUSolver::enqueue_and_run_coliision_detection_rounds_kernel()
+    bool EquihashGPUSolver::enqueue_and_run_coliision_detection_rounds_kernel()
     {
         std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
         
         cl::Kernel collision_detection_kernel = gpu_config_.get_equihash_collision_detection_round_kernel();
      
-        cl::Buffer & working_table = table_buffer_;
-        cl::Buffer & collision_table = collision_table_buffer_;
-        cl::Buffer & temp = table_buffer_;
+        cl::Buffer * temp = &table_buffer_;
         cl_int zero = 0;
-        uint32_t current_table_size = equihash_context_.init_size;
+        uint32_t current_table_rows = equihash_context_.init_size;
 
         // Go over K rounds, each time swapping the buffers
         cl_int err;
-        for(size_t i=0;i<equihash_context_.K && current_table_size > 0;i++)
+        collision_detection_kernel.setArg(0, context_buffer_);
+        collision_detection_kernel.setArg(3, collision_table_size_buffer_);
+        for(size_t i=0;i<equihash_context_.K && current_table_rows > 0;i++)
         {
-            uint32_t kernel_size_per_queue = current_table_size / device_queues.size();
+            uint32_t kernel_size_per_queue = current_table_rows / device_queues.size();
             
             std::cout << "Starting Kernel Round " << i+1 << "/" << equihash_context_.K << std::endl;
 
@@ -206,17 +245,26 @@ namespace Equihash
             device_queues[0].finish();
 
             // Set the arguments
-            collision_detection_kernel.setArg(0, context_buffer_);
-            collision_detection_kernel.setArg(1, working_table);
-            collision_detection_kernel.setArg(2, collision_table);
-            collision_detection_kernel.setArg(3, collision_table_size_buffer_);
-            collision_detection_kernel.setArg(4, current_table_size);
+            if(i % 2 == 0)
+            {
+                collision_detection_kernel.setArg(1, table_buffer_);
+                collision_detection_kernel.setArg(2, collision_table_buffer_);
+            }
+            else
+            {
+                collision_detection_kernel.setArg(1, collision_table_buffer_);
+                collision_detection_kernel.setArg(2, table_buffer_);
+            }
+
+            collision_detection_kernel.setArg(4, current_table_rows);
             collision_detection_kernel.setArg(5, (uint8_t)i);
 
             std::cout << "Running the kernels" << std::endl;
+            std::cout << "kernel_size_per_queue = " << kernel_size_per_queue << std::endl;
             for(size_t j=0;j<device_queues.size();j++)
             {
                 size_t queue_offset = kernel_size_per_queue*j;
+                
                 err = device_queues[j].enqueueNDRangeKernel(collision_detection_kernel,
                                                       cl::NDRange(queue_offset),
                                                       cl::NDRange(kernel_size_per_queue),
@@ -237,44 +285,108 @@ namespace Equihash
                 break;
             }
 
-            // Swap the buffers and reset / copy the current size
-            temp = working_table;
-            working_table = collision_table;
-            collision_table = temp;
+            device_queues[0].enqueueReadBuffer(collision_table_size_buffer_, true, 0, sizeof(uint32_t), &current_table_rows);
+            std::cout << "Round " << i+1 << " finished, collision size = " << current_table_rows << std::endl;
 
-            device_queues[0].enqueueReadBuffer(collision_table_size_buffer_, true, 0, sizeof(uint32_t), &current_table_size);
-            std::cout << "Round " << i+1 << " finished, collision size = " << current_table_size << std::endl;
+            if(current_table_rows == 0)
+            {
+                return false;
+            }
         }
 
         std::cout << "Finished Rounds" << std::endl;
-        // Keep the actual working table pointer for the solutions kernel
-        table_buffer_view_ = &working_table;
+
+        return true;
     }
 
-    void EquihashGPUSolver::enqueue_and_run_solutions_kernel()
+    std::vector<Proof> EquihashGPUSolver::enqueue_and_run_solutions_kernel(size_t nonce)
     {
         std::vector<cl::CommandQueue> & device_queues = gpu_config_.get_device_queues();
         
-        uint32_t size;
+        cl::Kernel solutions_kernel = gpu_config_.get_equihash_solutions_kernel();
+
+        uint32_t table_size;
         cl_int zero = 0;
         uint32_t single_solution_size = sizeof(uint32_t) * (equihash_context_.K + 1);
-        // cl::copy(collision_table_size_buffer_, &size, (&size) + sizeof(uint32_t));
-        device_queues[0].enqueueReadBuffer(collision_table_size_buffer_, true, 0, sizeof(uint32_t), &size);
+        device_queues[0].enqueueReadBuffer(collision_table_size_buffer_, true, 0, sizeof(uint32_t), &table_size);
+        uint32_t kernel_size_per_queue = table_size / device_queues.size();
 
-        // The solutions buffer can be max the current table size/2
+        // The solutions buffer based on the size of the table
         solutions_buffer_ = cl::Buffer(
             gpu_config_.get_context(),
             CL_MEM_READ_WRITE,
-            (size/2)*single_solution_size
+            table_size*(table_size+1)*single_solution_size
         );
 
-        device_queues[0].enqueueFillBuffer(solutions_buffer_, zero, 0, (size/2)*single_solution_size);
+        device_queues[0].enqueueFillBuffer(solutions_buffer_, zero, 0, (table_size/2)*single_solution_size);
 
-        // TODO
+        // Set the arguments
+        solutions_kernel.setArg(0, context_buffer_);
+        if(equihash_context_.K % 2 == 0)
+        {
+            solutions_kernel.setArg(1, table_buffer_);
+            solutions_kernel.setArg(2, collision_table_buffer_);
+        }
+        else
+        {
+            solutions_kernel.setArg(1, collision_table_buffer_);
+            solutions_kernel.setArg(2, table_buffer_);
+        }
+        solutions_kernel.setArg(3, solutions_buffer_);
+        solutions_kernel.setArg(4, collision_table_size_buffer_);
+        solutions_kernel.setArg(5, solutions_size_buffer_);
+        solutions_kernel.setArg(6, table_size);
+
+        std::cout << "Running solutions kernels" << std::endl;
+        cl_int err;
+        for(size_t j=0;j<device_queues.size();j++)
+        {
+            size_t queue_offset = kernel_size_per_queue*j;
+            err = device_queues[j].enqueueNDRangeKernel(solutions_kernel,
+                                                    cl::NDRange(queue_offset),
+                                                    cl::NDRange(kernel_size_per_queue),
+                                                    cl::NullRange);
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+            err = device_queues[j].flush();
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+        }
+        std::cout << "Waiting for kernels to end" << std::endl;
+        for(size_t j=0;j<device_queues.size();j++)
+        {
+            err = device_queues[j].finish();
+            std::cout << EquihashGPUUtils::get_cl_errno(err) << std::endl;
+        }
+        if(err)
+        {
+            std::cout << "Err occured on round, stopping" << std::endl;
+            return std::vector<Proof>();
+        }
+
+        // Collect the solutions
+        uint32_t solutions_amount;
+        device_queues[0].enqueueReadBuffer(solutions_size_buffer_, true, 0, sizeof(uint32_t), &solutions_amount);
+
+        uint8_t solutions_temp[solutions_amount * equihash_context_.solution_size];
+        device_queues[0].enqueueReadBuffer(solutions_buffer_, true, 0, solutions_amount * equihash_context_.solution_size, solutions_temp);
+        std::vector<Proof> solutions(solutions_amount);
+        std::vector<uint8_t> sol(equihash_context_.solution_size);
+        Proof p;
+        p.set_solution_nonce(nonce);
+        for(size_t i=0;i<solutions_amount;i++)
+        {
+            memcpy(&sol[0], solutions_temp + (equihash_context_.solution_size*i), equihash_context_.solution_size);
+            p.set_solution(sol);
+            solutions.push_back(p);
+        }
+
+        return solutions;
     }
 
-    Proof EquihashGPUSolver::find_proof()
+    std::vector<Proof> EquihashGPUSolver::find_proof()
     {
+    //     try
+    //     {
+        size_t nonce = 1;
         // Initialize the GPU config
         gpu_config_.initialize_configuration();
         gpu_config_.prepare_program();
@@ -284,28 +396,33 @@ namespace Equihash
 
         // Prepare the GPU buffers
         prepare_buffers();
-
-        uint32_t nonce = 1;
         while(nonce < MAX_NONCE)
         {
-            nonce++;
-
             // Fill the buffer hashes, note that this will block and run in batches on the GPU
             enqueue_and_run_hash_kernel(nonce);
 
             // Perform the coliision detection
-            enqueue_and_run_coliision_detection_rounds_kernel();
+            if(enqueue_and_run_coliision_detection_rounds_kernel())
+            {
+                // Perform the final round and get the solutions if any
+                std::vector<Proof> && solutions = enqueue_and_run_solutions_kernel(nonce);   
+            }
 
-            // Perform the final round and get the solutions
-            // enqueue_and_run_solutions_kernel();
-            return Proof();
+            nonce++;
         }
-
-        return Proof();
+        // }
+        // catch(cl::Error & err)
+        // {
+        //     std::cout << "Error Occured" << std::endl;
+        //     std::cout << err.what() << " - " << EquihashGPUUtils::get_cl_errno(err.err()) << std::endl;
+        //     backtrace();
+        //     return std::vector<Proof>();
+        // }
+        return std::vector<Proof>();
     }
 
     bool EquihashGPUSolver::verify_proof(const Proof & proof)
     {
-
+        // TODO
     }
 }

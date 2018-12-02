@@ -20,16 +20,18 @@ namespace Equihash
     class Proof
     {
     private:
-        std::vector<uint32_t> solution_inputs_;
+        std::vector<uint8_t> solution_;
         uint32_t solution_nonce_;
 
     public:
         Proof();
-        Proof(const std::vector<uint32_t> & solution_inputs, uint32_t solution_nonce);
+        Proof(const std::vector<uint8_t> & solutions, uint32_t solution_nonce);
         virtual ~Proof();
 
-        std::vector<uint32_t> & get_solution_inputs();
+        std::vector<uint8_t> & get_solution();
+        void set_solution(const std::vector<uint8_t> & sol);
         uint32_t get_solution_nonce()const;
+        void set_solution_nonce(uint32_t nonce);
     };
 }
 

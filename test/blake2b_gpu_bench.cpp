@@ -190,7 +190,7 @@ int main(int argc, char ** argv)
             auto blake2b_kernel = cl::make_kernel<cl::Buffer, cl::Buffer, uint32_t, uint32_t>(testProgram, "blake2b_gpu_hash", &err);
             // Run the kernel K times just to simulate K hashes
             Timer kernel;
-            blake2b_kernel(cl::EnqueueArgs(queue, 1), inMessage, outHash, message.size(), 64);
+            blake2b_kernel(cl::EnqueueArgs(queue, 2000000), inMessage, outHash, message.size(), 64);
 
             queue.finish();
             int64_t t1 = kernel.elapsed();
@@ -217,7 +217,7 @@ int main(int argc, char ** argv)
             size_t s = message.length();
             uint8_t out[64];
             Timer blake;
-            for(int i=0;i<1;i++)
+            for(int i=0;i<2000000;i++)
             {
                 blake2b(out, msg, NULL, 64, s, 0);
             }

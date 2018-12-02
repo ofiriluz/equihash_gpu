@@ -12,7 +12,12 @@
 #ifndef EQUIHASHGPU_EQUIHASH_GPU_CONFIG_H_
 #define EQUIHASHGPU_EQUIHASH_GPU_CONFIG_H_
 
-#include <CL/cl.hpp>
+// #define __CL_ENABLE_EXCEPTIONS 
+#if defined(__APPLE__) || defined(__MACOSX)
+    #include <OpenCL/cl.hpp>
+#else
+    #include <CL/cl.hpp>
+#endif
 #include <fstream>
 #include <vector>
 #include <iostream>
@@ -47,6 +52,7 @@ namespace Equihash
         cl::Program & get_program();
         cl::Kernel & get_equihash_hash_kernel();
         cl::Kernel & get_equihash_collision_detection_round_kernel();
+        cl::Kernel & get_equihash_solutions_kernel();
         std::vector<cl::Device> & get_devices();
         std::vector<cl::CommandQueue> & get_device_queues();
     };

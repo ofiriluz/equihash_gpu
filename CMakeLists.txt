@@ -14,6 +14,8 @@ ADD_EXECUTABLE(equihash_gpu
 TARGET_LINK_LIBRARIES(equihash_gpu
     OpenCL
     b2
+    dl
+    unwind
 )
 
 ADD_SUBDIRECTORY(test)
